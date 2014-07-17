@@ -24,47 +24,61 @@
  */
 
 #include <stdlib.h>
+#include <libxml/xmlreader.h>
+#include <libxml/tree.h>
 #include <bzlib.h>
 
-#define BUFF_SIZE 10
+struct bz2_file {
+	BZFILE *file;
+};
 
-libbz2_open(const char *filename)
+struct bz2_file *bz2_open(const char *filename)
 {
+	struct bz2_file *b = NULL;
 	FILE* f;
-	BZFILE* b;
-	int nBuf;
-	char buf[BUFF_SIZE];
 	int bzerror;
-	int nWritten;
 
 	f = fopen (filename, "r" );
-	if ( !f ) {
-		abort();
-	}
-	b = BZ2_bzReadOpen ( &bzerror, f, 0, 0, NULL, 0 );
-	if ( bzerror != BZ_OK ) {
-		BZ2_bzReadClose ( &bzerror, b );
-		abort();
-	}
-
-	bzerror = BZ_OK;
-	while ( bzerror == BZ_OK) {
-		nBuf = BZ2_bzRead ( &bzerror, b, buf, BUFF_SIZE );
-		buf[nBuf] = '\0';
-		if ( bzerror == BZ_OK || bzerror == BZ_STREAM_END) {
-			printf ("%s", buf);
+	if (f) {
+		b = malloc(sizeof(struct bz2_file));
+		b->file = BZ2_bzReadOpen(&bzerror, f, 0, 0, NULL, 0);
+		if (bzerror != BZ_OK) {
+			BZ2_bzReadClose(&bzerror, b->file);
+			free(b);
+			b = NULL;
 		}
 	}
-	if ( bzerror != BZ_STREAM_END ) {
-		BZ2_bzReadClose ( &bzerror, b );
-		abort();
-	} else {
-		BZ2_bzReadClose ( &bzerror, b );
-	}
+	return b;
+}
+
+//xmlInputReadCallback
+int bz2_read(void *bzfile, char *buffer, int len)
+{
+	int bzerror;
+	int size = BZ2_bzRead(&bzerror, ((struct bz2_file *)bzfile)->file, buffer, len);
+	if (bzerror == BZ_OK || bzerror == BZ_STREAM_END)
+		return size;
+	else
+		return -1;
+}
+
+// xmlInputCloseCallback
+int bz2_close(void *bzfile)
+{
+	int bzerror;
+	BZ2_bzReadClose(&bzerror, ((struct bz2_file *)bzfile)->file);
+	return bzerror == BZ_OK ? 0 : -1;
 }
 
 int main()
 {
-	libbz2_open("test/simple.xml.bz2");
+	xmlInitParser();
+	struct bz2_file *bzfile = bz2_open("test/simple.xml.bz2");
+	if (bzfile) {
+		xmlDocPtr doc = xmlReadIO(bz2_read, bz2_close, bzfile, "url", NULL, XML_PARSE_PEDANTIC);
+		xmlNodePtr root = xmlDocGetRootElement(doc);
+		printf("%s\n", xmlNodeGetContent(root));
+	}
+	xmlCleanupParser();
 }
 
